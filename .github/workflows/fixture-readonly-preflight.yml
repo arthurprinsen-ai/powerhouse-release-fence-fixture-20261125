@@ -1,0 +1,56 @@
+name: Fixture release preflight (read only)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: fixture-readonly-preflight
+  cancel-in-progress: false
+jobs:
+  observe:
+    if: github.repository_id == '1472298284' && github.repository == 'arthurprinsen-ai/powerhouse-release-fence-fixture-20261125' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Observe exact fixture candidate without authority
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re, urllib.request, urllib.error
+          repo = 'arthurprinsen-ai/powerhouse-release-fence-fixture-20261125'
+          expected_head = 'de7342f64838c5003de791aadbbb6c0c7cdda731'
+          assert os.environ['GITHUB_REPOSITORY'] == repo
+          assert os.environ['GITHUB_REPOSITORY_ID'] == '1472298284'
+          assert os.environ['GITHUB_REF'] == 'refs/heads/main'
+          assert re.fullmatch('[a-f0-9]{40}', os.environ['GITHUB_SHA'])
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, *args, **kwargs):
+                  raise RuntimeError('Unexpected API redirect')
+          opener = urllib.request.build_opener(NoRedirect())
+          def get(path):
+              req = urllib.request.Request('https://api.github.com/repos/'+repo+path, headers={
+                  'Authorization':'Bearer '+os.environ['GH_TOKEN'],
+                  'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}, method='GET')
+              with opener.open(req, timeout=15) as response:
+                  assert response.status == 200
+                  return json.load(response)
+          info = get('')
+          assert info['id'] == 1472298284 and info['full_name'] == repo
+          assert info['default_branch'] == 'main'
+          main = get('/git/ref/heads/main')['object']['sha']
+          assert main == os.environ['GITHUB_SHA']
+          pr = get('/pulls/1')
+          assert pr['number'] == 1 and pr['state'] == 'open' and pr['merged'] is False
+          assert pr['head']['repo']['id'] == pr['base']['repo']['id'] == 1472298284
+          assert pr['head']['ref'] == 'fixture-negative-control'
+          assert pr['head']['sha'] == expected_head and pr['base']['ref'] == 'main' and pr['base']['sha'] == main
+          rules = get('/rules/branches/main')
+          assert any(r.get('type') == 'update' and r.get('ruleset_id') == 28107028 for r in rules)
+          assert get('/git/ref/heads/main')['object']['sha'] == main
+          assert get('/pulls/1')['head']['sha'] == expected_head
+          print(json.dumps({'state':'FIXTURE_READONLY_OBSERVED','repositoryId':1472298284,'main':main,'head':expected_head,'mutationAuthority':False,'exclusiveWriterVerified':False,'mergeAuthorized':False}))
+          PY
