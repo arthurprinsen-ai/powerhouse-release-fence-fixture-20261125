@@ -1,0 +1,30 @@
+name: Fixture App preflight
+on:
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: fixture-app-preflight
+  cancel-in-progress: false
+jobs:
+  preflight:
+    if: github.repository == 'arthurprinsen-ai/powerhouse-release-fence-fixture-20261125' && github.repository_id == '1472298284' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: fixture-release-controller
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Deny any repeated or ambiguous issuance attempt
+        env:
+          FIXTURE_RUN_READ_TOKEN: ${{ github.token }}
+        run: node fixture/preflight.mjs --check-first-run
+      - name: Verify isolated App and revoke scoped token
+        env:
+          FIXTURE_RUN_READ_TOKEN: ${{ github.token }}
+          FIXTURE_APP_PRIVATE_KEY: ${{ secrets.FIXTURE_APP_PRIVATE_KEY }}
+        run: node fixture/preflight.mjs
