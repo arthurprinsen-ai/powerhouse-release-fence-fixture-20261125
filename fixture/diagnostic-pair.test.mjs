@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {diagnosticPair} from './diagnostic-pair.mjs';
+const failure=(stage,message)=>({stage,error:new Error(message)});
+test('preserves primary and cleanup denial',()=>{const d=diagnosticPair(failure('permission','PERMISSION_DENIED'),failure('revocation','REVOCATION_FAILED'));assert.equal(d.primary.code,'PERMISSION_DENIED');assert.equal(d.cleanup.code,'REVOCATION_FAILED');assert.equal(d.hold,true);assert.equal(d.mutationAuthority,false)});
+test('preissuance error cannot clear historical hold',()=>{const d=diagnosticPair(failure('key','KEY_DENIED'),null);assert.equal(d.primary.issuanceUnresolved,false);assert.equal(d.historicalIssuanceResolved,false);assert.equal(d.hold,true)});
+test('cleanup only still holds',()=>{const d=diagnosticPair(null,failure('revocation-readback','REVOCATION_READBACK_FAILED'));assert.equal(d.primary,null);assert.equal(d.cleanup.issuanceUnresolved,true);assert.equal(d.historicalIssuanceResolved,false)});
+test('no raw messages or invalid stage echoes',()=>{const d=diagnosticPair(failure('secret-stage','secret-primary'),failure('revocation','secret-cleanup'));assert.equal(d.primary.stage,'unknown');assert.equal(d.cleanup.code,'UNCLASSIFIED');assert.equal(JSON.stringify(d).includes('secret'),false)});
+test('empty record cannot imply authority',()=>{const d=diagnosticPair(null,null);assert.equal(d.hold,true);assert.equal(d.mutationAuthority,false);assert.equal(d.historicalIssuanceResolved,false)});
+test('immutable nested record',()=>{const d=diagnosticPair(failure('permission','PERMISSION_DENIED'),null);assert.equal(Object.isFrozen(d),true);assert.equal(Object.isFrozen(d.primary),true)});
