@@ -4,6 +4,21 @@ const repo='arthurprinsen-ai/powerhouse-release-fence-fixture-20261125', appId=5
 const check=(v,c)=>{if(!v)throw Error(c)};
 const enc=v=>Buffer.from(JSON.stringify(v)).toString('base64url');
 export function guard(e){check(e.GITHUB_REPOSITORY===repo&&e.GITHUB_REPOSITORY_ID===String(repoId)&&e.GITHUB_REF==='refs/heads/main'&&e.GITHUB_EVENT_NAME==='workflow_dispatch'&&/^[a-f0-9]{40}$/.test(e.GITHUB_SHA||''),'SCOPE_DENIED')}
+
+// Native run history is an additional fixture-only interlock, not an immutable production ledger.
+export async function guardFirstRun(e,fetcher=fetch){
+ guard(e);
+ check(e.GITHUB_RUN_ATTEMPT==='1'&&/^[1-9][0-9]*$/.test(e.GITHUB_RUN_ID||'')&&typeof e.FIXTURE_RUN_READ_TOKEN==='string'&&e.FIXTURE_RUN_READ_TOKEN.length>0,'ISSUANCE_HOLD');
+ const url=new URL('/repos/'+repo+'/actions/workflows/fixture-app-preflight.yml/runs?per_page=2','https://api.github.com');
+ const r=await fetcher(url,{method:'GET',redirect:'error',signal:AbortSignal.timeout(15000),headers:{Authorization:'Bearer '+e.FIXTURE_RUN_READ_TOKEN,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}});
+ check(r.ok,'ISSUANCE_HOLD');
+ const x=await r.json(),runs=x.workflow_runs;
+ check(x.total_count===1&&Array.isArray(runs)&&runs.length===1,'ISSUANCE_HOLD');
+ const a=runs[0];
+ check(String(a.id)===e.GITHUB_RUN_ID&&a.run_attempt===1&&a.event==='workflow_dispatch'&&a.head_branch==='main'&&a.head_sha===e.GITHUB_SHA&&a.repository?.id===repoId&&a.path==='.github/workflows/fixture-app-preflight.yml'&&a.status==='in_progress','ISSUANCE_HOLD');
+ return Object.freeze({runId:a.id,oneObservedRun:true,mutationAuthority:false});
+}
+
 export async function run(e,fetcher=fetch){
  guard(e);const key=createPrivateKey(e.FIXTURE_APP_PRIVATE_KEY||'');check(key.asymmetricKeyType==='rsa'&&key.asymmetricKeyDetails.modulusLength>=2048,'KEY_DENIED');
  const n=Math.floor(Date.now()/1000),b=enc({alg:'RS256',typ:'JWT'})+'.'+enc({iat:n-60,exp:n+480,iss:String(appId)}),jwt=b+'.'+sign('RSA-SHA256',Buffer.from(b),key).toString('base64url');
@@ -31,4 +46,4 @@ export async function run(e,fetcher=fetch){
  await observe();
  check(proof,'PROOF_MISSING');return {...proof,revocationVerified:true};
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){try{console.log('FIXTURE_PREFLIGHT_PROOF '+JSON.stringify(await run(process.env)))}catch(err){console.error(err?.message==='UNKNOWN_TOKEN_ISSUANCE'?'FIXTURE_UNKNOWN_TOKEN_ISSUANCE_HOLD':'FIXTURE_PREFLIGHT_FAILED');process.exitCode=1}}
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){try{if(process.argv[2]==='--check-first-run'){await guardFirstRun(process.env);console.log('FIXTURE_FIRST_RUN_GATE_PASS')}else{await guardFirstRun(process.env);console.log('FIXTURE_PREFLIGHT_PROOF '+JSON.stringify(await run(process.env)))}}catch(err){console.error(err?.message==='UNKNOWN_TOKEN_ISSUANCE'?'FIXTURE_UNKNOWN_TOKEN_ISSUANCE_HOLD':'FIXTURE_PREFLIGHT_FAILED');process.exitCode=1}}
